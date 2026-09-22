@@ -18,6 +18,7 @@ type UserAuth struct {
 	UserUID           string `xorm:"user_uid"`
 	AuthModule        string
 	AuthId            string
+	AuthIssuer        string `xorm:"auth_issuer"`
 	Created           time.Time
 	OAuthAccessToken  string
 	OAuthRefreshToken string
@@ -76,6 +77,7 @@ type RequestURIKey struct{}
 type SetAuthInfoCommand struct {
 	AuthModule  string
 	AuthId      string
+	AuthIssuer  string
 	UserId      int64
 	UserUID     string
 	OAuthToken  *oauth2.Token
@@ -85,6 +87,7 @@ type SetAuthInfoCommand struct {
 type UpdateAuthInfoCommand struct {
 	AuthModule  string
 	AuthId      string
+	AuthIssuer  string
 	UserId      int64
 	OAuthToken  *oauth2.Token
 	ExternalUID string
@@ -123,6 +126,9 @@ type GetAuthInfoQuery struct {
 	UserId     int64
 	AuthModule string
 	AuthId     string
+	// AuthIssuer, when set with AuthId, matches a link recorded by any client that
+	// resolves identities from the same issuer, not just AuthModule's own.
+	AuthIssuer string
 }
 
 type GetUserLabelsQuery struct {

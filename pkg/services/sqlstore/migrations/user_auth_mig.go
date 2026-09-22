@@ -55,6 +55,14 @@ func addUserAuthMigrations(mg *Migrator) {
 		Name: "user_uid", Type: DB_NVarchar, Length: 190, Nullable: true,
 	}))
 
+	mg.AddMigration("Add auth_issuer to user_auth", NewAddColumnMigration(userAuthV1, &Column{
+		Name: "auth_issuer", Type: DB_NVarchar, Length: 190, Nullable: true,
+	}))
+
+	mg.AddMigration("Add index on user_auth.auth_issuer and auth_id", NewAddIndexMigration(userAuthV1, &Index{
+		Cols: []string{"auth_issuer", "auth_id"},
+	}))
+
 	mg.AddMigration("Populate user_uid in user_auth from user table", NewRawSQLMigration("").
 		SQLite(`
 			UPDATE user_auth

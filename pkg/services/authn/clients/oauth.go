@@ -231,6 +231,7 @@ func (c *OAuth) Authenticate(ctx context.Context, r *authn.Request) (*authn.Iden
 		IsGrafanaAdmin:  userInfo.IsGrafanaAdmin,
 		AuthenticatedBy: c.moduleName,
 		AuthID:          userInfo.Id,
+		AuthIssuer:      userInfo.Issuer,
 		ExternalGroups:  userInfo.Groups,
 		OAuthToken:      token,
 		OrgRoles:        userInfo.OrgRoles,

@@ -137,8 +137,12 @@ func (o *OAuthInfo) IsAllowAssignGrafanaAdminEnabled() bool {
 }
 
 type BasicUserInfo struct {
-	Id             string
-	Name           string
+	Id   string
+	Name string
+	// Issuer is the "iss" claim of the token Id was taken from, so that (Issuer, Id) is
+	// the OIDC identity rather than Id alone. Empty when the provider gave no token to
+	// read it from, which keeps Id scoped to the client that produced it.
+	Issuer         string
 	Email          string
 	Login          string
 	Role           org.RoleType

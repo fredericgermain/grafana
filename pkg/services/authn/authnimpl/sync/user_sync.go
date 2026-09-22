@@ -481,6 +481,7 @@ func (s *UserSync) upsertAuthConnection(ctx context.Context, usr *user.User, ide
 			UserUID:    usr.UID,
 			AuthModule: identity.AuthenticatedBy,
 			AuthId:     identity.AuthID,
+			AuthIssuer: identity.AuthIssuer,
 		}
 
 		return s.authInfoService.SetAuthInfo(ctx, setAuthInfoCmd)
@@ -490,6 +491,7 @@ func (s *UserSync) upsertAuthConnection(ctx context.Context, usr *user.User, ide
 		UserId:     usr.ID,
 		AuthId:     identity.AuthID,
 		AuthModule: identity.AuthenticatedBy,
+		AuthIssuer: identity.AuthIssuer,
 	}
 
 	s.log.FromContext(ctx).Debug("Updating auth connection for user", "id", identity.ID)
@@ -738,7 +740,7 @@ func (s *UserSync) getUser(ctx context.Context, identity *authn.Identity) (*user
 
 	// Check auth info first
 	if identity.AuthID != "" && identity.AuthenticatedBy != "" && !skipAuthInfo {
-		query := &login.GetAuthInfoQuery{AuthId: identity.AuthID, AuthModule: identity.AuthenticatedBy}
+		query := &login.GetAuthInfoQuery{AuthId: identity.AuthID, AuthModule: identity.AuthenticatedBy, AuthIssuer: identity.AuthIssuer}
 		authInfo, errGetAuthInfo := s.authInfoService.GetAuthInfo(ctx, query)
 
 		if errGetAuthInfo != nil && !errors.Is(errGetAuthInfo, user.ErrUserNotFound) {
@@ -748,6 +750,15 @@ func (s *UserSync) getUser(ctx context.Context, identity *authn.Identity) (*user
 		if !errors.Is(errGetAuthInfo, user.ErrUserNotFound) {
 			usr, errGetByID := s.userService.GetByID(ctx, &user.GetUserByIDQuery{ID: authInfo.UserId})
 			if errGetByID == nil {
+				// The match may have come from the issuer, in which case the link found
+				// belongs to a DIFFERENT client. Returning it would make
+				// updateUserAttributes treat this client as already connected and call
+				// UpdateAuthInfo, which is scoped to (user_id, auth_module) and so
+				// updates nothing at all — the login works but leaves no record of how.
+				// Reporting no link instead makes it create one for this client.
+				if authInfo.AuthModule != identity.AuthenticatedBy {
+					return usr, nil, nil
+				}
 				return usr, authInfo, nil
 			}
 

@@ -46,12 +46,6 @@ func (s *Store) GetAuthInfo(ctx context.Context, query *login.GetAuthInfoQuery) 
 		return nil, user.ErrUserNotFound
 	}
 
-	userAuth := &login.UserAuth{
-		UserId:     query.UserId,
-		AuthModule: query.AuthModule,
-		AuthId:     query.AuthId,
-	}
-
 	var has bool
 	var err error
 
@@ -60,12 +54,45 @@ func (s *Store) GetAuthInfo(ctx context.Context, query *login.GetAuthInfoQuery) 
 		return nil, fmt.Errorf("get legacy DB: %w", err)
 	}
 
-	err = dbHelper.DB.WithDbSession(ctx, func(sess *db.Session) error {
-		has, err = sess.Table(dbHelper.Table("user_auth")).Desc("created").Get(userAuth)
-		return err
-	})
-	if err != nil {
-		return nil, err
+	userAuth := &login.UserAuth{}
+
+	// A subject is unique within its issuer, so a link recorded against the same
+	// (issuer, subject) identifies this user whichever client wrote it. Matching on that
+	// first is what lets one client adopt another's link; without it each client can only
+	// find rows it wrote itself, and a user created by one is invisible to the rest.
+	if query.AuthIssuer != "" && query.AuthId != "" {
+		byIssuer := &login.UserAuth{
+			UserId:     query.UserId,
+			AuthIssuer: query.AuthIssuer,
+			AuthId:     query.AuthId,
+		}
+		err = dbHelper.DB.WithDbSession(ctx, func(sess *db.Session) error {
+			has, err = sess.Table(dbHelper.Table("user_auth")).Desc("created").Get(byIssuer)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		if has {
+			userAuth = byIssuer
+		}
+	}
+
+	// Fall back to the module-scoped link: rows written before an issuer was recorded
+	// have none, and clients without an issuer at all (LDAP, auth proxy) never will.
+	if !has {
+		userAuth = &login.UserAuth{
+			UserId:     query.UserId,
+			AuthModule: query.AuthModule,
+			AuthId:     query.AuthId,
+		}
+		err = dbHelper.DB.WithDbSession(ctx, func(sess *db.Session) error {
+			has, err = sess.Table(dbHelper.Table("user_auth")).Desc("created").Get(userAuth)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if !has {
@@ -158,6 +185,7 @@ func (s *Store) SetAuthInfo(ctx context.Context, cmd *login.SetAuthInfoCommand) 
 		UserUID:     cmd.UserUID,
 		AuthModule:  cmd.AuthModule,
 		AuthId:      cmd.AuthId,
+		AuthIssuer:  cmd.AuthIssuer,
 		ExternalUID: cmd.ExternalUID,
 		Created:     GetTime(),
 	}
@@ -228,6 +256,7 @@ func (s *Store) UpdateAuthInfo(ctx context.Context, cmd *login.UpdateAuthInfoCom
 		UserId:      cmd.UserId,
 		AuthModule:  cmd.AuthModule,
 		AuthId:      cmd.AuthId,
+		AuthIssuer:  cmd.AuthIssuer,
 		Created:     GetTime(),
 		ExternalUID: cmd.ExternalUID,
 	}

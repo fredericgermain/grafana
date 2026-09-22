@@ -51,6 +51,13 @@ type Identity struct {
 	// AuthId is the unique identifier for the entity in the external system.
 	// Empty if the identity is provided by Grafana.
 	AuthID string
+	// AuthIssuer is the "iss" of the token AuthID was read from. A subject is only unique
+	// within its issuer, so (AuthIssuer, AuthID) is the identity; AuthID alone is not.
+	// When set, a link recorded by one client is visible to every other client resolving
+	// identities from the same issuer. Empty keeps the link scoped to AuthenticatedBy,
+	// which is the historical behaviour and the only option for LDAP, auth proxy and
+	// anything else without an issuer.
+	AuthIssuer string
 	// Namespace
 	Namespace string
 	// IsDisabled is true if the entity is disabled.
