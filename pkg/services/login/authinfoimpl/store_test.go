@@ -98,6 +98,39 @@ func TestIntegrationAuthInfoStore(t *testing.T) {
 		}
 	})
 
+	t.Run("should prefer the client's own link over a newer one from another client", func(t *testing.T) {
+		ctx := context.Background()
+		const (
+			issuer  = "https://login.example.com/tenant/v2.0"
+			subject = "own-link-subject"
+		)
+		t.Cleanup(func() { GetTime = time.Now })
+
+		// Every login refreshes its link's created time, so once a user alternates
+		// between clients the newest row for (issuer, subject) is usually the OTHER
+		// client's. Matching on that would report no link for this client and have a
+		// duplicate inserted on every switch.
+		GetTime = func() time.Time { return time.Now().Add(-time.Hour) }
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule, AuthId: subject, AuthIssuer: issuer,
+			UserId: 70, UserUID: "70",
+		}))
+		GetTime = time.Now
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.GenericOAuthModule, AuthId: subject, AuthIssuer: issuer,
+			UserId: 70, UserUID: "70",
+		}))
+
+		info, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+			AuthModule: login.JWTModule,
+			AuthId:     subject,
+			AuthIssuer: issuer,
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(70), info.UserId)
+		require.Equal(t, login.JWTModule, info.AuthModule)
+	})
+
 	t.Run("should not match an identical subject from a different issuer", func(t *testing.T) {
 		ctx := context.Background()
 		// A subject is only unique within its issuer, so the same sub from somewhere else

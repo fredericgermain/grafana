@@ -54,36 +54,33 @@ func (s *Store) GetAuthInfo(ctx context.Context, query *login.GetAuthInfoQuery) 
 		return nil, fmt.Errorf("get legacy DB: %w", err)
 	}
 
-	userAuth := &login.UserAuth{}
-
-	// A subject is unique within its issuer, so a link recorded against the same
-	// (issuer, subject) identifies this user whichever client wrote it. Matching on that
-	// first is what lets one client adopt another's link; without it each client can only
-	// find rows it wrote itself, and a user created by one is invisible to the rest.
-	if query.AuthIssuer != "" && query.AuthId != "" {
-		byIssuer := &login.UserAuth{
-			UserId:     query.UserId,
-			AuthIssuer: query.AuthIssuer,
-			AuthId:     query.AuthId,
-		}
-		err = dbHelper.DB.WithDbSession(ctx, func(sess *db.Session) error {
-			has, err = sess.Table(dbHelper.Table("user_auth")).Desc("created").Get(byIssuer)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-		if has {
-			userAuth = byIssuer
-		}
+	// The client's own link comes first, exactly as before. Matching on the issuer first
+	// instead would pick whichever client logged in last — every login refreshes its
+	// row's created time — so a user alternating between clients would be reported as
+	// having no link for this one, and gain a duplicate row on every switch.
+	userAuth := &login.UserAuth{
+		UserId:     query.UserId,
+		AuthModule: query.AuthModule,
+		AuthId:     query.AuthId,
+	}
+	err = dbHelper.DB.WithDbSession(ctx, func(sess *db.Session) error {
+		has, err = sess.Table(dbHelper.Table("user_auth")).Desc("created").Get(userAuth)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	// Fall back to the module-scoped link: rows written before an issuer was recorded
-	// have none, and clients without an issuer at all (LDAP, auth proxy) never will.
-	if !has {
+	// A subject is unique within its issuer, so a link recorded against the same
+	// (issuer, subject) identifies this user whichever client wrote it. Falling back to
+	// that is what lets one client adopt another's link; without it each client can only
+	// find rows it wrote itself, and a user created by one is invisible to the rest. Rows
+	// written before an issuer was recorded have none, and clients without an issuer at
+	// all (LDAP, auth proxy) never will, so both stay module-scoped.
+	if !has && query.AuthIssuer != "" && query.AuthId != "" {
 		userAuth = &login.UserAuth{
 			UserId:     query.UserId,
-			AuthModule: query.AuthModule,
+			AuthIssuer: query.AuthIssuer,
 			AuthId:     query.AuthId,
 		}
 		err = dbHelper.DB.WithDbSession(ctx, func(sess *db.Session) error {
