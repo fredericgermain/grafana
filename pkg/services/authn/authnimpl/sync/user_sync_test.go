@@ -2209,6 +2209,42 @@ func TestUserSync_SyncUserHook_NonProvisionedSAMLUserCreatesNewAuthConnection(t 
 	authInfoSrv.AssertNotCalled(t, "UpdateAuthInfo", mock.Anything, mock.Anything)
 }
 
+func TestUserSync_SyncUserHook_ExistingUserNotLinkedToModule(t *testing.T) {
+	// Creation collides with a user another module created, and this client's lookup cannot see it: the
+	// retry fetch finds nothing. Without lookup params (OAuth without insecure email lookup) the user
+	// service is never asked for the user by login or email, only the auth info by module.
+	userSrv := usertest.NewMockService(t)
+	userSrv.On("Create", mock.Anything, mock.Anything).Return(nil, user.ErrUserAlreadyExists).Once()
+
+	provider.UsingFlags(t, defaultFeatureFlags)
+	s := ProvideUserSync(
+		userSrv,
+		authinfoimpl.ProvideOSSUserProtectionService(),
+		&authinfotest.FakeService{ExpectedError: user.ErrUserNotFound},
+		&quotatest.FakeQuotaService{},
+		tracing.NewNoopTracerService(),
+		featuremgmt.WithFeatures(),
+		setting.NewCfg(),
+		nil,
+	)
+
+	err := s.SyncUserHook(context.Background(), &authn.Identity{
+		AuthenticatedBy: login.GenericOAuthModule,
+		AuthID:          "subject",
+		Login:           "user",
+		Email:           "user@example.com",
+		ClientParams: authn.ClientParams{
+			SyncUser:    true,
+			AllowSignUp: true,
+		},
+	}, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errUserNotLinked)
+	assert.NotErrorIs(t, err, user.ErrUserNotFound)
+	assert.Contains(t, err.Error(), login.GenericOAuthModule)
+}
+
 func TestUserSync_SyncUserHook_SCIMAuthModuleMismatch(t *testing.T) {
 	userSrv := usertest.NewMockService(t)
 	authInfoSrv := authinfotest.NewMockAuthInfoService(t)

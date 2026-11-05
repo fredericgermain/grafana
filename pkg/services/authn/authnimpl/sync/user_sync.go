@@ -85,6 +85,10 @@ var (
 		"user.sync.scim-auth-module-mismatch",
 		errutil.WithPublicMessage("User was provisioned via SCIM and must login via SAML"),
 	)
+	errUserNotLinked = errutil.Unauthorized(
+		"user.sync.user-not-linked",
+		errutil.WithPublicMessage("A user with this login or email already exists but is not linked to this login method"),
+	)
 )
 
 var (
@@ -329,6 +333,16 @@ func (s *UserSync) SyncUserHook(ctx context.Context, id *authn.Identity, _ *auth
 		// just try to fetch the user one more to make the other request work.
 		if errors.Is(err, user.ErrUserAlreadyExists) {
 			usr, _, err = s.getUser(ctx, id)
+
+			// Not a race: the user that blocked creation is still invisible to this client. It was created by
+			// another auth module, and this client's lookup cannot match it (for OAuth, LookUpParams are empty
+			// unless [auth] oauth_allow_insecure_email_lookup is set). Retrying will never succeed, so say so
+			// rather than report the user as not found.
+			if errors.Is(err, user.ErrUserNotFound) {
+				s.log.FromContext(ctx).Error("Failed to create user, a user with the same login or email exists but is not linked to this auth module",
+					"auth_module", id.AuthenticatedBy, "auth_id", id.AuthID)
+				return errUserNotLinked.Errorf("a user with the same login or email exists but is not linked to auth module %s", id.AuthenticatedBy)
+			}
 
 			// Check if this is a SCIM-provisioned user trying to login via an auth module that is not SAML or GCOM
 			if err == nil && usr != nil && usr.IsProvisioned && id.AuthenticatedBy != login.GrafanaComAuthModule {
