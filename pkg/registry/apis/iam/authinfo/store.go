@@ -130,7 +130,8 @@ func (l *LegacyStore) Get(ctx context.Context, name string, options *metav1.GetO
 //
 // Listing is scoped to one user via the spec.userRef.name field selector, or to one
 // (authModule, authID) pair via the spec.authID field selector (with an optional
-// spec.authModule) when the caller doesn't know the user yet.
+// spec.authModule) when the caller doesn't know the user yet. An optional
+// spec.authIssuer with spec.authID matches the link of any module for that issuer.
 func (l *LegacyStore) List(ctx context.Context, options *internalversion.ListOptions) (runtime.Object, error) {
 	ctx, span := l.tracer.Start(ctx, "authinfo.list")
 	defer span.End()
@@ -144,18 +145,20 @@ func (l *LegacyStore) List(ctx context.Context, options *internalversion.ListOpt
 	var hasUserRef bool
 	var authModuleFilter string
 	var authIDFilter string
+	var authIssuerFilter string
 	var hasAuthID bool
 	if options.FieldSelector != nil {
 		userUID, hasUserRef = options.FieldSelector.RequiresExactMatch("spec.userRef.name")
 		authModuleFilter, _ = options.FieldSelector.RequiresExactMatch("spec.authModule")
 		authIDFilter, hasAuthID = options.FieldSelector.RequiresExactMatch("spec.authID")
+		authIssuerFilter, _ = options.FieldSelector.RequiresExactMatch("spec.authIssuer")
 	}
 	if !hasUserRef && !hasAuthID {
 		return nil, apierrors.NewBadRequest("listing authinfo requires a spec.userRef.name or spec.authID field selector")
 	}
 
 	if !hasUserRef {
-		authInfo, err := l.authInfoStore.GetAuthInfo(ctx, &login.GetAuthInfoQuery{AuthModule: authModuleFilter, AuthId: authIDFilter})
+		authInfo, err := l.authInfoStore.GetAuthInfo(ctx, &login.GetAuthInfoQuery{AuthModule: authModuleFilter, AuthId: authIDFilter, AuthIssuer: authIssuerFilter})
 		if err != nil {
 			if errors.Is(err, user.ErrUserNotFound) {
 				return &iamv0alpha1.AuthInfoList{}, nil
@@ -202,6 +205,9 @@ func (l *LegacyStore) List(ctx context.Context, options *internalversion.ListOpt
 		}
 
 		if authIDFilter != "" && authInfo.AuthId != authIDFilter {
+			continue
+		}
+		if authIssuerFilter != "" && authInfo.AuthIssuer != authIssuerFilter {
 			continue
 		}
 
@@ -262,9 +268,15 @@ func (l *LegacyStore) Create(ctx context.Context, obj runtime.Object, createVali
 		externalUID = *authInfoObj.Spec.ExternalUID
 	}
 
+	var authIssuer string
+	if authInfoObj.Spec.AuthIssuer != nil {
+		authIssuer = *authInfoObj.Spec.AuthIssuer
+	}
+
 	if err := l.authInfoStore.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
 		AuthModule:  authModule,
 		AuthId:      authInfoObj.Spec.AuthID,
+		AuthIssuer:  authIssuer,
 		UserId:      userRes.ID,
 		UserUID:     userUID,
 		ExternalUID: externalUID,
@@ -337,9 +349,15 @@ func (l *LegacyStore) Update(ctx context.Context, name string, objInfo rest.Upda
 		externalUID = *newAuthInfo.Spec.ExternalUID
 	}
 
+	var authIssuer string
+	if newAuthInfo.Spec.AuthIssuer != nil {
+		authIssuer = *newAuthInfo.Spec.AuthIssuer
+	}
+
 	if err := l.authInfoStore.UpdateAuthInfo(ctx, &login.UpdateAuthInfoCommand{
 		AuthModule:  newAuthInfo.Spec.AuthModule,
 		AuthId:      newAuthInfo.Spec.AuthID,
+		AuthIssuer:  authIssuer,
 		UserId:      userRes.ID,
 		ExternalUID: externalUID,
 	}); err != nil {
@@ -439,6 +457,11 @@ func mapToAuthInfoObject(ns claims.NamespaceInfo, userUID string, ua *login.User
 	if ua.ExternalUID != "" {
 		externalUID := ua.ExternalUID
 		result.Spec.ExternalUID = &externalUID
+	}
+
+	if ua.AuthIssuer != "" {
+		authIssuer := ua.AuthIssuer
+		result.Spec.AuthIssuer = &authIssuer
 	}
 
 	if !ua.Created.IsZero() {

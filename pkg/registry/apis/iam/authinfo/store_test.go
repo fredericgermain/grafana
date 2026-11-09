@@ -329,6 +329,28 @@ func TestLegacyStore_List(t *testing.T) {
 		require.Len(t, list.Items, 1)
 	})
 
+	t.Run("passes the authIssuer filter through with authID", func(t *testing.T) {
+		authInfoStore := authinfotest.NewMockAuthInfoStore(t)
+		authInfoStore.On("GetAuthInfo", mock.Anything, &login.GetAuthInfoQuery{AuthId: "sub-1", AuthIssuer: "https://idp.example"}).
+			Return(&login.UserAuth{UserId: 1, UserUID: "user-uid", AuthModule: "jwt", AuthId: "sub-1", AuthIssuer: "https://idp.example", Created: created}, nil)
+
+		store := NewLegacyStore(identities, authInfoStore, noop.NewTracerProvider().Tracer("test"), remotecache.NewFakeCacheStorage())
+
+		obj, err := store.List(testCtx(), &internalversion.ListOptions{
+			FieldSelector: fields.AndSelectors(
+				fields.OneTermEqualSelector("spec.authID", "sub-1"),
+				fields.OneTermEqualSelector("spec.authIssuer", "https://idp.example"),
+			),
+		})
+		require.NoError(t, err)
+
+		list, ok := obj.(*iamv0alpha1.AuthInfoList)
+		require.True(t, ok)
+		require.Len(t, list.Items, 1)
+		require.NotNil(t, list.Items[0].Spec.AuthIssuer)
+		require.Equal(t, "https://idp.example", *list.Items[0].Spec.AuthIssuer)
+	})
+
 	t.Run("returns an empty list when no authinfo matches authID", func(t *testing.T) {
 		authInfoStore := authinfotest.NewMockAuthInfoStore(t)
 		authInfoStore.On("GetAuthInfo", mock.Anything, &login.GetAuthInfoQuery{AuthId: "no-such-id"}).

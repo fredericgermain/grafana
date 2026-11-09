@@ -79,6 +79,12 @@ If users want to use the same email address with multiple identity providers (fo
 
 Note that enabling this option can lower the security of your Grafana instance. If you enable this option, make sure that the `Allowed organization`, `Allowed groups` and `Allowed domains` settings are configured correctly to prevent unauthorized access.
 
+## Using the same identity provider with JWT and OAuth
+
+If [JWT authentication](jwt/) and [Generic OAuth](generic-oauth/) both accept tokens from the same identity provider (for example, API access with JWT and browser login with Generic OAuth against the same Entra ID or Keycloak realm), Grafana links the user by the token's issuer (`iss`) and subject (`sub`). A user created by one method is found by the other, and `oauth_allow_insecure_email_lookup` is not needed. No configuration is required.
+
+Note that this trusts the `iss` claim as presented. Make sure each method only accepts tokens from that issuer: set `expect_claims` with the `iss` value for JWT, and enable `validate_id_token` with `jwk_set_url` for Generic OAuth.
+
 ## Multi-factor authentication (MFA/2FA)
 
 Grafana and the Grafana Cloud portal currently do not include built-in support for multi-factor authentication (MFA).

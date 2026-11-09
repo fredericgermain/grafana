@@ -46,6 +46,20 @@ var (
 					return string(cast.Spec.AuthID), nil
 				},
 			},
+			{
+				FieldSelector: "spec.authIssuer",
+				FieldValueFunc: func(o resource.Object) (string, error) {
+					cast, ok := o.(*AuthInfo)
+					if !ok {
+						return "", errors.New("provided object must be of type *AuthInfo")
+					}
+					if cast.Spec.AuthIssuer == nil {
+						return "", nil
+					}
+
+					return string(*cast.Spec.AuthIssuer), nil
+				},
+			},
 		}))
 	kindAuthInfo = resource.Kind{
 		Schema: schemaAuthInfo,

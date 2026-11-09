@@ -216,6 +216,56 @@ func TestStore_GetAuthInfo(t *testing.T) {
 			},
 		},
 		{
+			name:  "AuthId and issuer, no own link, falls back to another module's link for the issuer",
+			query: &login.GetAuthInfoQuery{AuthModule: "oauth_generic_oauth", AuthId: "sub-1", AuthIssuer: "https://idp.example"},
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/authinfos"):
+					selector := r.URL.Query().Get("fieldSelector")
+					switch {
+					case strings.Contains(selector, "spec.authModule=oauth_generic_oauth"):
+						writeJSON(t, w, iamv0alpha1.AuthInfoList{})
+					case strings.Contains(selector, "spec.authIssuer=https://idp.example"):
+						assert.Contains(t, selector, "spec.authID=sub-1")
+						item := authInfoItem("user-uid.jwt", "user-uid", "jwt", "sub-1", created)
+						issuer := "https://idp.example"
+						item.Spec.AuthIssuer = &issuer
+						writeJSON(t, w, iamv0alpha1.AuthInfoList{Items: []iamv0alpha1.AuthInfo{item}})
+					default:
+						t.Fatalf("unexpected field selector: %s", selector)
+					}
+				case strings.Contains(r.URL.Path, "/users/"):
+					userByUIDResponse(t, w, "user-uid", 99)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			},
+			want: &login.UserAuth{UserId: 99, UserUID: "user-uid", AuthModule: "jwt", AuthId: "sub-1", AuthIssuer: "https://idp.example", Created: created},
+		},
+		{
+			name:  "AuthId and issuer, own link exists, does not match on the issuer",
+			query: &login.GetAuthInfoQuery{AuthModule: "oauth_generic_oauth", AuthId: "sub-1", AuthIssuer: "https://idp.example"},
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/authinfos"):
+					selector := r.URL.Query().Get("fieldSelector")
+					if strings.Contains(selector, "spec.authIssuer") {
+						t.Fatalf("the module's own link was found; the issuer must not be queried")
+					}
+					writeJSON(t, w, iamv0alpha1.AuthInfoList{Items: []iamv0alpha1.AuthInfo{
+						authInfoItem("user-uid.oauth-generic-oauth", "user-uid", "oauth_generic_oauth", "sub-1", created),
+					}})
+				case strings.Contains(r.URL.Path, "/users/"):
+					userByUIDResponse(t, w, "user-uid", 99)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			},
+			check: func(t *testing.T, result *login.UserAuth) {
+				assert.Equal(t, "oauth_generic_oauth", result.AuthModule)
+			},
+		},
+		{
 			name:  "requires UserId or AuthId",
 			query: &login.GetAuthInfoQuery{},
 			handler: func(w http.ResponseWriter, r *http.Request) {
@@ -516,6 +566,22 @@ func TestStore_SetAuthInfo(t *testing.T) {
 					assert.Equal(t, "external-42", *obj.Spec.ExternalUID)
 					require.NotNil(t, obj.Spec.Created)
 					assert.WithinDuration(t, time.Now(), time.UnixMilli(*obj.Spec.Created), 10*time.Second)
+					writeJSON(t, w, obj)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			},
+		},
+		{
+			name: "records the issuer when the command carries one",
+			cmd:  &login.SetAuthInfoCommand{UserId: 42, UserUID: "user-uid", AuthModule: "jwt", AuthId: "sub-1", AuthIssuer: "https://idp.example"},
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPost:
+					var obj iamv0alpha1.AuthInfo
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&obj))
+					require.NotNil(t, obj.Spec.AuthIssuer)
+					assert.Equal(t, "https://idp.example", *obj.Spec.AuthIssuer)
 					writeJSON(t, w, obj)
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)

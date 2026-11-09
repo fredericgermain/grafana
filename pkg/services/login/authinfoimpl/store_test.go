@@ -39,6 +39,164 @@ func TestIntegrationAuthInfoStore(t *testing.T) {
 	store, err := ProvideLegacyStore(context.Background(), legacysql.NewDatabaseProvider(sql), secretstest.NewFakeSecretsService())
 	require.NoError(t, err)
 
+	t.Run("should find a link another client recorded for the same issuer and subject", func(t *testing.T) {
+		ctx := context.Background()
+		const (
+			issuer  = "https://login.example.com/tenant/v2.0"
+			subject = "pairwise-subject-abc"
+		)
+
+		// The JWT client gets there first, as it does whenever a token call reaches a
+		// Grafana before its owner has opened the UI.
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule,
+			AuthId:     subject,
+			AuthIssuer: issuer,
+			UserId:     50,
+			UserUID:    "50",
+		}))
+
+		// The browser login then presents the same identity under its own module. Without
+		// the issuer this finds nothing, and the account cannot be reached through the UI
+		// again: the lookup misses, creating collides on the login, and the retry misses
+		// the same way.
+		info, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+			AuthModule: login.GenericOAuthModule,
+			AuthId:     subject,
+			AuthIssuer: issuer,
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(50), info.UserId)
+		require.Equal(t, login.JWTModule, info.AuthModule)
+	})
+
+	t.Run("should record a link for the adopting client, not just the original", func(t *testing.T) {
+		ctx := context.Background()
+		const (
+			issuer  = "https://login.example.com/tenant/v2.0"
+			subject = "adopting-client-subject"
+		)
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule, AuthId: subject, AuthIssuer: issuer,
+			UserId: 60, UserUID: "60",
+		}))
+
+		// What SyncUserHook does once getUser reports no link for this client: the
+		// row found by issuer belongs to another module, so updating in place would
+		// touch nothing (UpdateAuthInfo is scoped to user_id AND auth_module).
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.GenericOAuthModule, AuthId: subject, AuthIssuer: issuer,
+			UserId: 60, UserUID: "60",
+		}))
+
+		for _, module := range []string{login.JWTModule, login.GenericOAuthModule} {
+			info, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+				UserId: 60, AuthModule: module,
+			})
+			require.NoError(t, err, "no link recorded for %s", module)
+			require.Equal(t, module, info.AuthModule)
+		}
+	})
+
+	t.Run("should prefer the client's own link over a newer one from another client", func(t *testing.T) {
+		ctx := context.Background()
+		const (
+			issuer  = "https://login.example.com/tenant/v2.0"
+			subject = "own-link-subject"
+		)
+		t.Cleanup(func() { GetTime = time.Now })
+
+		// Every login refreshes its link's created time, so once a user alternates
+		// between clients the newest row for (issuer, subject) is usually the OTHER
+		// client's. Matching on that would report no link for this client and have a
+		// duplicate inserted on every switch.
+		GetTime = func() time.Time { return time.Now().Add(-time.Hour) }
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule, AuthId: subject, AuthIssuer: issuer,
+			UserId: 70, UserUID: "70",
+		}))
+		GetTime = time.Now
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.GenericOAuthModule, AuthId: subject, AuthIssuer: issuer,
+			UserId: 70, UserUID: "70",
+		}))
+
+		info, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+			AuthModule: login.JWTModule,
+			AuthId:     subject,
+			AuthIssuer: issuer,
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(70), info.UserId)
+		require.Equal(t, login.JWTModule, info.AuthModule)
+	})
+
+	t.Run("should not match an identical subject from a different issuer", func(t *testing.T) {
+		ctx := context.Background()
+		// A subject is only unique within its issuer, so the same sub from somewhere else
+		// has to stay a different person. This is what stops the lookup over-linking.
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule,
+			AuthId:     "shared-subject",
+			AuthIssuer: "https://issuer-one.example.com",
+			UserId:     51,
+			UserUID:    "51",
+		}))
+
+		_, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+			AuthModule: login.GenericOAuthModule,
+			AuthId:     "shared-subject",
+			AuthIssuer: "https://issuer-two.example.com",
+		})
+		require.ErrorIs(t, err, user.ErrUserNotFound)
+	})
+
+	t.Run("should match on the issuer when the query names no module", func(t *testing.T) {
+		ctx := context.Background()
+		// Without a module, a lookup by subject alone would match the subject under any
+		// issuer, so the issuer has to decide. This is the AuthInfo API's lookup by
+		// spec.authID and spec.authIssuer.
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule,
+			AuthId:     "subject-no-module",
+			AuthIssuer: "https://issuer-one.example.com",
+			UserId:     53,
+			UserUID:    "53",
+		}))
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.GenericOAuthModule,
+			AuthId:     "subject-no-module",
+			AuthIssuer: "https://issuer-two.example.com",
+			UserId:     54,
+			UserUID:    "54",
+		}))
+
+		info, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+			AuthId:     "subject-no-module",
+			AuthIssuer: "https://issuer-one.example.com",
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(53), info.UserId)
+	})
+
+	t.Run("should keep a link scoped to its module when no issuer was recorded", func(t *testing.T) {
+		ctx := context.Background()
+		// Rows written before this existed, and clients with no issuer at all, keep the
+		// old behaviour rather than becoming visible to everyone.
+		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{
+			AuthModule: login.JWTModule,
+			AuthId:     "no-issuer-subject",
+			UserId:     52,
+			UserUID:    "52",
+		}))
+
+		_, err := store.GetAuthInfo(ctx, &login.GetAuthInfoQuery{
+			AuthModule: login.GenericOAuthModule,
+			AuthId:     "no-issuer-subject",
+		})
+		require.ErrorIs(t, err, user.ErrUserNotFound)
+	})
+
 	t.Run("should be able to auth lables for users", func(t *testing.T) {
 		ctx := context.Background()
 		require.NoError(t, store.SetAuthInfo(ctx, &login.SetAuthInfoCommand{

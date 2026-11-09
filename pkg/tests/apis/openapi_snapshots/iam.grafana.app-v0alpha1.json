@@ -4335,6 +4335,10 @@
             "type": "string",
             "default": ""
           },
+          "authIssuer": {
+            "description": "authIssuer is the issuer (\"iss\") of the token authID was read from. A subject is only unique within its issuer, so a link with an issuer can be matched by any auth module that resolves identities from the same issuer. Absent for modules without one (LDAP, auth proxy).",
+            "type": "string"
+          },
           "authModule": {
             "description": "authModule is the external auth provider the user is linked through (e.g. \"github\", \"ldap\", \"saml\").",
             "type": "string",

@@ -75,9 +75,14 @@ func (s *JWT) Authenticate(ctx context.Context, r *authn.Request) (*authn.Identi
 		return nil, errJWTMissingClaim.Errorf("missing mandatory 'sub' claim in JWT")
 	}
 
+	// A subject is only unique within its issuer, so carry both. Absent, the identity
+	// stays scoped to this client as before.
+	iss, _ := claims["iss"].(string)
+
 	id := &authn.Identity{
 		AuthenticatedBy: login.JWTModule,
 		AuthID:          sub,
+		AuthIssuer:      iss,
 		OrgID:           r.OrgID,
 		OrgRoles:        map[int64]org.RoleType{},
 		ClientParams: authn.ClientParams{

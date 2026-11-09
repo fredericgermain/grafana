@@ -9,6 +9,11 @@ AuthInfoSpec: {
 	// authID is the identifier the auth provider returns at login (OAuth subject, LDAP DN, SAML NameID).
 	authID: string
 
+	// authIssuer is the issuer ("iss") of the token authID was read from. A subject is only
+	// unique within its issuer, so a link with an issuer can be matched by any auth module
+	// that resolves identities from the same issuer. Absent for modules without one (LDAP, auth proxy).
+	authIssuer?: string
+
 	// externalUID is the external unique identifier of the user, used for provisioning
 	// systems such as SCIM to correlate the user without relying on authID.
 	externalUID?: string

@@ -98,6 +98,12 @@ func (s *Store) GetAuthInfo(ctx context.Context, query *login.GetAuthInfoQuery) 
 		}
 
 		item, err := s.findByAuthID(ctx, authClient, namespace, query.AuthModule, query.AuthId)
+		// Same order as the legacy store: the module's own link first, then a link any
+		// module recorded for the same (issuer, subject). Without a module there is no
+		// own link to prefer, so the issuer is matched directly.
+		if query.AuthIssuer != "" && (query.AuthModule == "" || errors.Is(err, user.ErrUserNotFound)) {
+			item, err = s.findByIssuer(ctx, authClient, namespace, query.AuthIssuer, query.AuthId)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -224,10 +230,13 @@ func (s *Store) SetAuthInfo(ctx context.Context, cmd *login.SetAuthInfoCommand) 
 	if cmd.ExternalUID != "" {
 		obj.Spec.ExternalUID = &cmd.ExternalUID
 	}
+	if cmd.AuthIssuer != "" {
+		obj.Spec.AuthIssuer = &cmd.AuthIssuer
+	}
 
 	if _, err := authClient.Create(ctx, obj, resource.CreateOptions{}); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			return s.applyUpdate(ctx, authClient, namespace, obj.Name, cmd.AuthId, cmd.ExternalUID)
+			return s.applyUpdate(ctx, authClient, namespace, obj.Name, cmd.AuthId, cmd.AuthIssuer, cmd.ExternalUID)
 		}
 		return err
 	}
@@ -256,7 +265,7 @@ func (s *Store) UpdateAuthInfo(ctx context.Context, cmd *login.UpdateAuthInfoCom
 		return err
 	}
 
-	return s.applyUpdate(ctx, authClient, namespace, iamv0alpha1.EncodeName(userUID, cmd.AuthModule), cmd.AuthId, cmd.ExternalUID)
+	return s.applyUpdate(ctx, authClient, namespace, iamv0alpha1.EncodeName(userUID, cmd.AuthModule), cmd.AuthId, cmd.AuthIssuer, cmd.ExternalUID)
 }
 
 // DeleteUserAuthInfo implements login.Store.
@@ -323,7 +332,7 @@ func hasTokenValue(t *oauth2.Token) bool {
 
 // applyUpdate fetches the named object and updates its mutable fields.
 // A NotFound here is a silent no-op (see UpdateAuthInfo), not an error.
-func (s *Store) applyUpdate(ctx context.Context, client *iamv0alpha1.AuthInfoClient, namespace, name, authID, externalUID string) error {
+func (s *Store) applyUpdate(ctx context.Context, client *iamv0alpha1.AuthInfoClient, namespace, name, authID, authIssuer, externalUID string) error {
 	existing, err := client.Get(ctx, resource.Identifier{Namespace: namespace, Name: name})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -336,6 +345,10 @@ func (s *Store) applyUpdate(ctx context.Context, client *iamv0alpha1.AuthInfoCli
 	// Only overwrite ExternalUID when the caller actually supplied one.
 	if externalUID != "" {
 		existing.Spec.ExternalUID = &externalUID
+	}
+	// Likewise the issuer, which a caller without one (LDAP, auth proxy) never sends.
+	if authIssuer != "" {
+		existing.Spec.AuthIssuer = &authIssuer
 	}
 
 	// Bump Created on every update, matching the legacy store.
@@ -386,6 +399,30 @@ func (s *Store) findByAuthID(ctx context.Context, client *iamv0alpha1.AuthInfoCl
 	selectors := []string{"spec.authID=" + fields.EscapeValue(authID)}
 	if authModule != "" {
 		selectors = append(selectors, "spec.authModule="+fields.EscapeValue(authModule))
+	}
+
+	list, err := client.ListAll(ctx, namespace, resource.ListOptions{FieldSelectors: selectors})
+	if err != nil {
+		return iamv0alpha1.AuthInfo{}, err
+	}
+	if len(list.Items) == 0 {
+		return iamv0alpha1.AuthInfo{}, user.ErrUserNotFound
+	}
+
+	items := list.Items
+	sort.SliceStable(items, func(i, j int) bool {
+		return created(items[i]).After(created(items[j]))
+	})
+
+	return items[0], nil
+}
+
+// findByIssuer looks up the most-recently-created AuthInfo object matching
+// authIssuer + authID, whichever module recorded it.
+func (s *Store) findByIssuer(ctx context.Context, client *iamv0alpha1.AuthInfoClient, namespace, authIssuer, authID string) (iamv0alpha1.AuthInfo, error) {
+	selectors := []string{
+		"spec.authID=" + fields.EscapeValue(authID),
+		"spec.authIssuer=" + fields.EscapeValue(authIssuer),
 	}
 
 	list, err := client.ListAll(ctx, namespace, resource.ListOptions{FieldSelectors: selectors})
@@ -467,6 +504,11 @@ func toUserAuth(userID int64, obj iamv0alpha1.AuthInfo) *login.UserAuth {
 		externalUID = *obj.Spec.ExternalUID
 	}
 
+	var authIssuer string
+	if obj.Spec.AuthIssuer != nil {
+		authIssuer = *obj.Spec.AuthIssuer
+	}
+
 	var id int64
 	if meta, err := utils.MetaAccessor(&obj); err == nil {
 		id = meta.GetDeprecatedInternalID() // nolint:staticcheck
@@ -478,6 +520,7 @@ func toUserAuth(userID int64, obj iamv0alpha1.AuthInfo) *login.UserAuth {
 		UserUID:     obj.Spec.UserRef.Name,
 		AuthModule:  obj.Spec.AuthModule,
 		AuthId:      obj.Spec.AuthID,
+		AuthIssuer:  authIssuer,
 		Created:     created(obj),
 		ExternalUID: externalUID,
 	}

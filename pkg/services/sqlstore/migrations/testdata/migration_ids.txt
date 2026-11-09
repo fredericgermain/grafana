@@ -350,6 +350,8 @@
 "Add user_unique_id to user_auth"
 "Add user_uid to user_auth"
 "Populate user_uid in user_auth from user table"
+"Add auth_issuer to user_auth"
+"Add index on user_auth.auth_issuer and auth_id"
 "create server_lock table"
 "add index server_lock.operation_uid"
 "create user auth token table"

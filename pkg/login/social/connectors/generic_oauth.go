@@ -212,7 +212,10 @@ func (s *SocialGenericOAuth) isOrganizationMember(ctx context.Context, client *h
 }
 
 type UserInfoJson struct {
-	Sub         string              `json:"sub"`
+	Sub string `json:"sub"`
+	// Iss is only present on a token; the userinfo endpoint does not carry one, so this
+	// stays empty for that source and the identity falls back to being client-scoped.
+	Iss         string              `json:"iss"`
 	Name        string              `json:"name"`
 	DisplayName string              `json:"display_name"`
 	Login       string              `json:"login"`
@@ -310,6 +313,9 @@ func (s *SocialGenericOAuth) buildUserInfo(logger log.Logger, dataSources []*Use
 func (s *SocialGenericOAuth) extractBasicUserFields(logger log.Logger, userInfo *social.BasicUserInfo, data *UserInfoJson) {
 	if userInfo.Id == "" {
 		userInfo.Id = data.Sub
+		// Pair the issuer with the subject it came from. Taking them from different
+		// sources would produce an identity that belongs to neither.
+		userInfo.Issuer = data.Iss
 	}
 
 	if userInfo.Name == "" {

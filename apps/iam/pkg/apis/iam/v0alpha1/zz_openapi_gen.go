@@ -218,6 +218,13 @@ func schema_pkg_apis_iam_v0alpha1_AuthInfoSpec(ref common.ReferenceCallback) com
 							Format:      "",
 						},
 					},
+					"authIssuer": {
+						SchemaProps: spec.SchemaProps{
+							Description: "authIssuer is the issuer (\"iss\") of the token authID was read from. A subject is only unique within its issuer, so a link with an issuer can be matched by any auth module that resolves identities from the same issuer. Absent for modules without one (LDAP, auth proxy).",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 					"externalUID": {
 						SchemaProps: spec.SchemaProps{
 							Description: "externalUID is the external unique identifier of the user, used for provisioning systems such as SCIM to correlate the user without relying on authID.",

@@ -1031,6 +1031,7 @@ var appManifestData = app.ManifestData{
 						"spec.userRef.name",
 						"spec.authModule",
 						"spec.authID",
+						"spec.authIssuer",
 					},
 					SearchFields: []app.ManifestVersionKindSearchField{
 						{
@@ -1053,6 +1054,13 @@ var appManifestData = app.ManifestData{
 							Type:         "string",
 							Capabilities: []string{"filter", "retrieve"},
 							Description:  "The identifier the auth provider returns at login",
+						},
+						{
+							Name:         "authIssuer",
+							Path:         "spec.authIssuer",
+							Type:         "string",
+							Capabilities: []string{"filter", "retrieve"},
+							Description:  "The issuer of the token the identifier was read from",
 						},
 						{
 							Name:         "externalUID",

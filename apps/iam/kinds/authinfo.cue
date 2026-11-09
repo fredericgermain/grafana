@@ -21,6 +21,7 @@ authInfov0alpha1: authInfoKind & {
 		"spec.userRef.name",
 		"spec.authModule",
 		"spec.authID",
+		"spec.authIssuer",
 	]
 	searchFields: [
 		{
@@ -43,6 +44,13 @@ authInfov0alpha1: authInfoKind & {
 			type: "string"
 			capabilities: ["filter", "retrieve"]
 			description: "The identifier the auth provider returns at login"
+		},
+		{
+			name: "authIssuer"
+			path: "spec.authIssuer"
+			type: "string"
+			capabilities: ["filter", "retrieve"]
+			description: "The issuer of the token the identifier was read from"
 		},
 		{
 			name: "externalUID"
